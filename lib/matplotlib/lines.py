@@ -80,7 +80,7 @@ def segment_hits(cx, cy, x, y, radius):
     """
     # Process single points specially
     if len(x) <= 1:
-        res, = np.nonzero(np.hypot(cx - x, cy - y) <= radius)
+        res, = np.nonzero((cx - x) ** 2 + (cy - y) ** 2 <= radius ** 2)
         return res
 
     # We need to lop the last element off a lot.
@@ -89,24 +89,24 @@ def segment_hits(cx, cy, x, y, radius):
     # Only look at line segments whose nearest point to C on the line
     # lies within the segment.
     dx, dy = x[1:] - xr, y[1:] - yr
-    u = (cx - xr) * dx + (cy - yr) * dy
-    candidates = (0 <= u) & (u <= dx ** 2 + dy ** 2)
+    Lnorm_sq = dx ** 2 + dy ** 2  # Possibly want to eliminate Lnorm==0
+    u = ((cx - xr) * dx + (cy - yr) * dy) / Lnorm_sq
+    candidates = (u >= 0) & (u <= 1)
 
     # Note that there is a little area near one side of each point
     # which will be near neither segment, and another which will
     # be near both, depending on the angle of the lines.  The
     # following radius test eliminates these ambiguities.
-    point_hits = np.hypot(cx - x, cy - y) <= radius
+    point_hits = (cx - x) ** 2 + (cy - y) ** 2 <= radius ** 2
     candidates = candidates & ~(point_hits[:-1] | point_hits[1:])
 
     # For those candidates which remain, determine how far they lie away
     # from the line.
     px, py = xr + u * dx, yr + u * dy
-    line_hits = np.hypot(cx - px, cy - py) <= radius
+    line_hits = (cx - px) ** 2 + (cy - py) ** 2 <= radius ** 2
     line_hits = line_hits & candidates
-
-    points, = point_hits.nonzero()
-    lines, = line_hits.nonzero()
+    points, = point_hits.ravel().nonzero()
+    lines, = line_hits.ravel().nonzero()
     return np.concatenate((points, lines))
 
 
@@ -454,16 +454,21 @@ class Line2D(Artist):
         else:
             pixels = self.figure.dpi / 72. * self.pickradius
 
-        # Check for collision
-        if self._linestyle in ['None', None]:
-            # If no line, return the nearby point(s)
-            ind, = np.nonzero(
-                np.hypot(xt - mouseevent.x, yt - mouseevent.y) <= pixels)
-        else:
-            # If line, return the nearby segment(s)
-            ind = segment_hits(mouseevent.x, mouseevent.y, xt, yt, pixels)
-            if self._drawstyle.startswith("steps"):
-                ind //= 2
+        # The math involved in checking for containment (here and inside of
+        # segment_hits) assumes that it is OK to overflow, so temporarily set
+        # the error flags accordingly.
+        with np.errstate(all='ignore'):
+            # Check for collision
+            if self._linestyle in ['None', None]:
+                # If no line, return the nearby point(s)
+                ind, = np.nonzero(
+                    (xt - mouseevent.x) ** 2 + (yt - mouseevent.y) ** 2
+                    <= pixels ** 2)
+            else:
+                # If line, return the nearby segment(s)
+                ind = segment_hits(mouseevent.x, mouseevent.y, xt, yt, pixels)
+                if self._drawstyle.startswith("steps"):
+                    ind //= 2
 
         ind += self.ind_offset
 
@@ -532,7 +537,7 @@ class Line2D(Artist):
         Parameters
         ----------
         every : None or int or (int, int) or slice or List[int] or float or \
-(float, float)
+(float, float) or List[bool]
             Which markers to plot.
 
             - every=None, every point will be plotted.
@@ -544,6 +549,8 @@ class Line2D(Artist):
               point start, up to but not including point end, will be plotted.
             - every=[i, j, m, n], only markers at points i, j, m, and n
               will be plotted.
+            - every=[True, False, True], positions that are True will be
+              plotted.
             - every=0.1, (i.e. a float) then markers will be spaced at
               approximately equal distances along the line; the distance
               along the line between markers is determined by multiplying the
@@ -575,9 +582,8 @@ class Line2D(Artist):
         axes-bounding-box-diagonal regardless of the actual axes data limits.
 
         """
-        if self._markevery != every:
-            self.stale = True
         self._markevery = every
+        self.stale = True
 
     def get_markevery(self):
         """
@@ -756,6 +762,7 @@ class Line2D(Artist):
             if len(tpath.vertices):
                 gc = renderer.new_gc()
                 self._set_gc_clip(gc)
+                gc.set_url(self.get_url())
 
                 lc_rgba = mcolors.to_rgba(self._color, self._alpha)
                 gc.set_foreground(lc_rgba, isRGBA=True)
@@ -782,6 +789,7 @@ class Line2D(Artist):
         if self._marker and self._markersize > 0:
             gc = renderer.new_gc()
             self._set_gc_clip(gc)
+            gc.set_url(self.get_url())
             gc.set_linewidth(self._markeredgewidth)
             gc.set_antialiased(self._antialiased)
 
@@ -928,12 +936,11 @@ class Line2D(Artist):
         return self._markeredgewidth
 
     def _get_markerfacecolor(self, alt=False):
+        if self.get_fillstyle() == 'none':
+            return 'none'
         fc = self._markerfacecoloralt if alt else self._markerfacecolor
         if cbook._str_lower_equal(fc, 'auto'):
-            if self.get_fillstyle() == 'none':
-                return 'none'
-            else:
-                return self._color
+            return self._color
         else:
             return fc
 

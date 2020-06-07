@@ -234,8 +234,7 @@ def switch_backend(newbackend):
         # Don't try to fallback on the cairo-based backends as they each have
         # an additional dependency (pycairo) over the agg-based backend, and
         # are of worse quality.
-        for candidate in [
-                "macosx", "qt5agg", "qt4agg", "gtk3agg", "tkagg", "wxagg"]:
+        for candidate in ["macosx", "qt5agg", "gtk3agg", "tkagg", "wxagg"]:
             try:
                 switch_backend(candidate)
             except ImportError:
@@ -307,58 +306,111 @@ def draw_if_interactive(*args, **kwargs):
 # This function's signature is rewritten upon backend-load by switch_backend.
 def show(*args, **kwargs):
     """
-    Display all figures.
+    Display all open figures.
 
-    When running in ipython with its pylab mode, display all
-    figures and return to the ipython prompt.
+    In non-interactive mode, *block* defaults to True.  All figures
+    will display and show will not return until all windows are closed.
+    If there are no figures, return immediately.
 
-    In non-interactive mode, display all figures and block until
-    the figures have been closed; in interactive mode it has no
-    effect unless figures were created prior to a change from
-    non-interactive to interactive mode (not recommended).  In
-    that case it displays the figures but does not block.
+    In interactive mode *block* defaults to False.  This will ensure
+    that all of the figures are shown and this function immediately returns.
 
     Parameters
     ----------
     block : bool, optional
-        This is experimental, and may be set to ``True`` or ``False`` to
-        override the blocking behavior described above.
+
+        If `True` block and run the GUI main loop until all windows
+        are closed.
+
+        If `False` ensure that all windows are displayed and return
+        immediately.  In this case, you are responsible for ensuring
+        that the event loop is running to have responsive figures.
+
+    See Also
+    --------
+    ion : enable interactive mode
+    ioff : disable interactive mode
+
     """
     _warn_if_gui_out_of_main_thread()
     return _backend_mod.show(*args, **kwargs)
 
 
 def isinteractive():
-    """Return whether to redraw after every plotting command."""
+    """
+    Return if pyplot is in "interactive mode" or not.
+
+    If in interactive mode then:
+
+      - newly created figures will be shown immediately
+      - figures will automatically redraw on change
+      - `.pyplot.show` will not block by default
+
+    If not in interactive mode then:
+
+      - newly created figures and changes to figures will
+        not be reflected until explicitly asked to be
+      - `.pyplot.show` will block by default
+
+    See Also
+    --------
+    ion : enable interactive mode
+    ioff : disable interactive mode
+
+    show : show windows (and maybe block)
+    pause : show windows, run GUI event loop, and block for a time
+    """
     return matplotlib.is_interactive()
 
 
 def ioff():
-    """Turn the interactive mode off."""
+    """
+    Turn the interactive mode off.
+
+    See Also
+    --------
+    ion : enable interactive mode
+    isinteractive : query current state
+
+    show : show windows (and maybe block)
+    pause : show windows, run GUI event loop, and block for a time
+    """
     matplotlib.interactive(False)
     uninstall_repl_displayhook()
 
 
 def ion():
-    """Turn the interactive mode on."""
+    """
+    Turn the interactive mode on.
+
+    See Also
+    --------
+    ioff : disable interactive mode
+    isinteractive : query current state
+
+    show : show windows (and maybe block)
+    pause : show windows, run GUI event loop, and block for a time
+    """
     matplotlib.interactive(True)
     install_repl_displayhook()
 
 
 def pause(interval):
     """
-    Pause for *interval* seconds.
+    Run the GUI event loop for *interval* seconds.
 
     If there is an active figure, it will be updated and displayed before the
     pause, and the GUI event loop (if any) will run during the pause.
 
-    This can be used for crude animation.  For more complex animation, see
+    This can be used for crude animation.  For more complex animation use
     :mod:`matplotlib.animation`.
 
-    Notes
-    -----
-    This function is experimental; its behavior may be changed or extended in a
-    future release.
+    If there is no active figure, sleep for *interval* seconds instead.
+
+    See Also
+    --------
+    matplotlib.animation : Complex animation
+    show : show figures and optional block forever
     """
     manager = _pylab_helpers.Gcf.get_active()
     if manager is not None:
@@ -820,7 +872,7 @@ def axes(arg=None, **kwargs):
         The exact behavior of this function depends on the type:
 
         - *None*: A new full window axes is added using
-          ``subplot(111, **kwargs)``
+          ``subplot(111, **kwargs)``.
         - 4-tuple of floats *rect* = ``[left, bottom, width, height]``.
           A new axes is added with dimensions *rect* in normalized
           (0, 1) units using `~.Figure.add_axes` on the current figure.
@@ -844,11 +896,10 @@ def axes(arg=None, **kwargs):
 
     Returns
     -------
-    `~.axes.Axes` (or a subclass of `~.axes.Axes`)
+    `~.axes.Axes`, or a subclass of `~.axes.Axes`
         The returned axes class depends on the projection used. It is
-        `~.axes.Axes` if rectilinear projection are used and
-        `.projections.polar.PolarAxes` if polar projection
-        are used.
+        `~.axes.Axes` if rectilinear projection is used and
+        `.projections.polar.PolarAxes` if polar projection is used.
 
     Other Parameters
     ----------------
@@ -936,19 +987,21 @@ def subplot(*args, **kwargs):
 
     Parameters
     ----------
-    *args, default: (1, 1, 1)
-        Either a 3-digit integer or three separate integers
-        describing the position of the subplot. If the three
-        integers are *nrows*, *ncols*, and *index* in order, the
-        subplot will take the *index* position on a grid with *nrows*
-        rows and *ncols* columns. *index* starts at 1 in the upper left
-        corner and increases to the right.
+    *args : int, (int, int, *index*), or `.SubplotSpec`, default: (1, 1, 1)
+        The position of the subplot described by one of
 
-        *pos* is a three digit integer, where the first digit is the
-        number of rows, the second the number of columns, and the third
-        the index of the subplot. i.e. fig.add_subplot(235) is the same as
-        fig.add_subplot(2, 3, 5). Note that all integers must be less than
-        10 for this form to work.
+        - Three integers (*nrows*, *ncols*, *index*). The subplot will take the
+          *index* position on a grid with *nrows* rows and *ncols* columns.
+          *index* starts at 1 in the upper left corner and increases to the
+          right. *index* can also be a two-tuple specifying the (*first*,
+          *last*) indices (1-based, and including *last*) of the subplot, e.g.,
+          ``fig.add_subplot(3, 1, (1, 2))`` makes a subplot that spans the
+          upper 2/3 of the figure.
+        - A 3-digit integer. The digits are interpreted as if given separately
+          as three single-digit integers, i.e. ``fig.add_subplot(235)`` is the
+          same as ``fig.add_subplot(2, 3, 5)``. Note that this can only be used
+          if there are no more than 9 subplots.
+        - A `.SubplotSpec`.
 
     projection : {None, 'aitoff', 'hammer', 'lambert', 'mollweide', \
 'polar', 'rectilinear', str}, optional
@@ -969,13 +1022,12 @@ def subplot(*args, **kwargs):
 
     Returns
     -------
-    an `.axes.SubplotBase` subclass of `~.axes.Axes` (or a subclass of \
-`~.axes.Axes`)
+    `.axes.SubplotBase`, or another subclass of `~.axes.Axes`
 
         The axes of the subplot. The returned axes base class depends on
         the projection used. It is `~.axes.Axes` if rectilinear projection
-        are used and `.projections.polar.PolarAxes` if polar projection
-        are used. The returned axes is then a subplot subclass of the
+        is used and `.projections.polar.PolarAxes` if polar projection
+        is used. The returned axes is then a subplot subclass of the
         base class.
 
     Other Parameters
@@ -1224,7 +1276,7 @@ def subplots(nrows=1, ncols=1, sharex=False, sharey=False, squeeze=True,
 
 def subplot2grid(shape, loc, rowspan=1, colspan=1, fig=None, **kwargs):
     """
-    Create an axis at specific location inside a regular grid.
+    Create a subplot at a specific location inside a regular grid.
 
     Parameters
     ----------
@@ -1232,26 +1284,35 @@ def subplot2grid(shape, loc, rowspan=1, colspan=1, fig=None, **kwargs):
         Number of rows and of columns of the grid in which to place axis.
     loc : (int, int)
         Row number and column number of the axis location within the grid.
-    rowspan : int
+    rowspan : int, default: 1
         Number of rows for the axis to span to the right.
-    colspan : int
+    colspan : int, default: 1
         Number of columns for the axis to span downwards.
     fig : `.Figure`, optional
-        Figure to place axis in. Defaults to current figure.
+        Figure to place the subplot in. Defaults to the current figure.
     **kwargs
-        Additional keyword arguments are handed to `add_subplot`.
+        Additional keyword arguments are handed to `~.Figure.add_subplot`.
+
+    Returns
+    -------
+    `.axes.SubplotBase`, or another subclass of `~.axes.Axes`
+
+        The axes of the subplot.  The returned axes base class depends on the
+        projection used.  It is `~.axes.Axes` if rectilinear projection is used
+        and `.projections.polar.PolarAxes` if polar projection is used.  The
+        returned axes is then a subplot subclass of the base class.
 
     Notes
     -----
     The following call ::
 
-        subplot2grid(shape, loc, rowspan=1, colspan=1)
+        ax = subplot2grid((nrows, ncols), (row, col), rowspan, colspan)
 
     is identical to ::
 
-        gridspec = GridSpec(shape[0], shape[1])
-        subplotspec = gridspec.new_subplotspec(loc, rowspan, colspan)
-        subplot(subplotspec)
+        fig = gcf()
+        gs = fig.add_gridspec(nrows, ncols)
+        ax = fig.add_subplot(gs[row:row+rowspan, col:col+colspan])
     """
 
     if fig is None:
@@ -2547,7 +2608,7 @@ def hist2d(
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.
 @_copy_docstring_and_deprecators(Axes.hlines)
 def hlines(
-        y, xmin, xmax, colors='k', linestyles='solid', label='', *,
+        y, xmin, xmax, colors=None, linestyles='solid', label='', *,
         data=None, **kwargs):
     return gca().hlines(
         y, xmin, xmax, colors=colors, linestyles=linestyles,
@@ -2918,7 +2979,7 @@ def violinplot(
 # Autogenerated by boilerplate.py.  Do not edit as changes will be lost.
 @_copy_docstring_and_deprecators(Axes.vlines)
 def vlines(
-        x, ymin, ymax, colors='k', linestyles='solid', label='', *,
+        x, ymin, ymax, colors=None, linestyles='solid', label='', *,
         data=None, **kwargs):
     return gca().vlines(
         x, ymin, ymax, colors=colors, linestyles=linestyles,

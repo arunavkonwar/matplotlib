@@ -5,7 +5,7 @@ import urllib.parse
 
 import numpy as np
 
-from matplotlib import _text_layout, cbook, dviread, font_manager, rcParams
+from matplotlib import _text_layout, dviread, font_manager, rcParams
 from matplotlib.font_manager import FontProperties, get_font
 from matplotlib.ft2font import LOAD_NO_HINTING, LOAD_TARGET_LIGHT
 from matplotlib.mathtext import MathTextParser
@@ -52,7 +52,7 @@ class TextToPath:
         return char_id
 
     def get_text_width_height_descent(self, s, prop, ismath):
-        if rcParams['text.usetex']:
+        if ismath == "TeX":
             texmanager = self.get_texmanager()
             fontsize = prop.get_size_in_points()
             w, h, d = texmanager.get_text_width_height_descent(s, fontsize,
@@ -385,10 +385,7 @@ class TextPath(Path):
         # Circular import.
         from matplotlib.text import Text
 
-        if prop is None:
-            prop = FontProperties()
-        else:
-            prop = FontProperties._from_any(prop)
+        prop = FontProperties._from_any(prop)
         if size is None:
             size = prop.get_size_in_points()
 

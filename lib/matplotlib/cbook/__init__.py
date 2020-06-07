@@ -433,7 +433,7 @@ def is_scalar_or_string(val):
     return isinstance(val, str) or not np.iterable(val)
 
 
-def get_sample_data(fname, asfileobj=True):
+def get_sample_data(fname, asfileobj=True, *, np_load=False):
     """
     Return a sample data file.  *fname* is a path relative to the
     :file:`mpl-data/sample_data` directory.  If *asfileobj* is `True`
@@ -442,13 +442,27 @@ def get_sample_data(fname, asfileobj=True):
     Sample data files are stored in the 'mpl-data/sample_data' directory within
     the Matplotlib package.
 
-    If the filename ends in .gz, the file is implicitly ungzipped.
+    If the filename ends in .gz, the file is implicitly ungzipped.  If the
+    filename ends with .npy or .npz, *asfileobj* is True, and *np_load* is
+    True, the file is loaded with `numpy.load`.  *np_load* currently defaults
+    to False but will default to True in a future release.
     """
-    path = Path(matplotlib.get_data_path(), 'sample_data', fname)
+    path = _get_data_path('sample_data', fname)
     if asfileobj:
         suffix = path.suffix.lower()
         if suffix == '.gz':
             return gzip.open(path)
+        elif suffix in ['.npy', '.npz']:
+            if np_load:
+                return np.load(path)
+            else:
+                warn_deprecated(
+                    "3.3", message="In a future release, get_sample_data "
+                    "will automatically load numpy arrays.  Set np_load to "
+                    "True to get the array and suppress this warning.  Set "
+                    "asfileobj to False to get the path to the data file and "
+                    "suppress this warning.")
+                return path.open('rb')
         elif suffix in ['.csv', '.xrc', '.txt']:
             return path.open('r')
         else:
@@ -989,7 +1003,12 @@ def _combine_masks(*args):
         else:
             if isinstance(x, np.ma.MaskedArray) and x.ndim > 1:
                 raise ValueError("Masked arrays must be 1-D")
-            x = np.asanyarray(x)
+            try:
+                x = np.asanyarray(x)
+            except (np.VisibleDeprecationWarning, ValueError):
+                # NumPy 1.19 raises a warning about ragged arrays, but we want
+                # to accept basically anything here.
+                x = np.asanyarray(x, dtype=object)
             if x.ndim == 1:
                 x = safe_masked_invalid(x)
                 seqlist[i] = True
@@ -1316,24 +1335,48 @@ def _reshape_2D(X, name):
     Use Fortran ordering to convert ndarrays and lists of iterables to lists of
     1D arrays.
 
-    Lists of iterables are converted by applying `np.asarray` to each of their
-    elements.  1D ndarrays are returned in a singleton list containing them.
-    2D ndarrays are converted to the list of their *columns*.
+    Lists of iterables are converted by applying `np.asanyarray` to each of
+    their elements.  1D ndarrays are returned in a singleton list containing
+    them.  2D ndarrays are converted to the list of their *columns*.
 
     *name* is used to generate the error message for invalid inputs.
     """
-    # Iterate over columns for ndarrays, over rows otherwise.
-    X = np.atleast_1d(X.T if isinstance(X, np.ndarray) else np.asarray(X))
+    # Iterate over columns for ndarrays.
+    if isinstance(X, np.ndarray):
+        X = X.T
+
+        if len(X) == 0:
+            return [[]]
+        elif X.ndim == 1 and np.ndim(X[0]) == 0:
+            # 1D array of scalars: directly return it.
+            return [X]
+        elif X.ndim in [1, 2]:
+            # 2D array, or 1D array of iterables: flatten them first.
+            return [np.reshape(x, -1) for x in X]
+        else:
+            raise ValueError(f'{name} must have 2 or fewer dimensions')
+
+    # Iterate over list of iterables.
     if len(X) == 0:
         return [[]]
-    elif X.ndim == 1 and np.ndim(X[0]) == 0:
+
+    result = []
+    is_1d = True
+    for xi in X:
+        xi = np.asanyarray(xi)
+        nd = np.ndim(xi)
+        if nd > 1:
+            raise ValueError(f'{name} must have 2 or fewer dimensions')
+        elif nd == 1 and len(xi) != 1:
+            is_1d = False
+        result.append(xi.reshape(-1))
+
+    if is_1d:
         # 1D array of scalars: directly return it.
-        return [X]
-    elif X.ndim in [1, 2]:
-        # 2D array, or 1D array of iterables: flatten them first.
-        return [np.reshape(x, -1) for x in X]
+        return [np.reshape(result, -1)]
     else:
-        raise ValueError("{} must have 2 or fewer dimensions".format(name))
+        # 2D array, or 1D array of iterables: use flattened version.
+        return result
 
 
 def violin_stats(X, method, points=100, quantiles=None):
@@ -1399,10 +1442,10 @@ def violin_stats(X, method, points=100, quantiles=None):
         quantiles = _reshape_2D(quantiles, "quantiles")
     # Else, mock quantiles if is none or empty
     else:
-        quantiles = [[]] * np.shape(X)[0]
+        quantiles = [[]] * len(X)
 
     # quantiles should has the same size as dataset
-    if np.shape(X)[:1] != np.shape(quantiles)[:1]:
+    if len(X) != len(quantiles):
         raise ValueError("List of violinplot statistics and quantiles values"
                          " must have the same length")
 
@@ -1577,8 +1620,15 @@ def index_of(y):
     try:
         return y.index.values, y.values
     except AttributeError:
+        pass
+    try:
         y = _check_1d(y)
+    except (np.VisibleDeprecationWarning, ValueError):
+        # NumPy 1.19 will warn on ragged input, and we can't actually use it.
+        pass
+    else:
         return np.arange(y.shape[0], dtype=float), y
+    raise ValueError('Input could not be cast to an at-least-1D NumPy array')
 
 
 def safe_first_element(obj):
@@ -2175,6 +2225,45 @@ def _check_in_list(_values, **kwargs):
             raise ValueError(
                 "{!r} is not a valid value for {}; supported values are {}"
                 .format(v, k, ', '.join(map(repr, values))))
+
+
+def _check_shape(_shape, **kwargs):
+    """
+    For each *key, value* pair in *kwargs*, check that *value* has the shape
+    *_shape*, if not, raise an appropriate ValueError.
+
+    *None* in the shape is treated as a "free" size that can have any length.
+    e.g. (None, 2) -> (N, 2)
+
+    The values checked must be numpy arrays.
+
+    Examples
+    --------
+    To check for (N, 2) shaped arrays
+
+    >>> cbook._check_in_list((None, 2), arg=arg, other_arg=other_arg)
+    """
+    target_shape = _shape
+    for k, v in kwargs.items():
+        data_shape = v.shape
+
+        if len(target_shape) != len(data_shape) or any(
+                t not in [s, None]
+                for t, s in zip(target_shape, data_shape)
+        ):
+            dim_labels = iter(itertools.chain(
+                'MNLIJKLH',
+                (f"D{i}" for i in itertools.count())))
+            text_shape = ", ".join((str(n)
+                                    if n is not None
+                                    else next(dim_labels)
+                                    for n in target_shape))
+
+            raise ValueError(
+                f"{k!r} must be {len(target_shape)}D "
+                f"with shape ({text_shape}). "
+                f"Your input has shape {v.shape}."
+            )
 
 
 def _check_getitem(_mapping, **kwargs):

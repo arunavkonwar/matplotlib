@@ -23,9 +23,6 @@ graphics contexts must implement to serve as a Matplotlib backend.
 
 `ToolContainerBase`
     The base class for the Toolbar class of each interactive backend.
-
-`StatusbarBase`
-    The base class for the messaging area.
 """
 
 from contextlib import contextmanager
@@ -506,6 +503,7 @@ class RendererBase:
         """
         return False
 
+    @cbook._delete_parameter("3.3", "ismath")
     def draw_tex(self, gc, x, y, s, prop, angle, ismath='TeX!', mtext=None):
         """
         """
@@ -1504,7 +1502,7 @@ class KeyEvent(LocationEvent):
         self.key = key
 
 
-def _get_renderer(figure, print_method, *, draw_disabled=False):
+def _get_renderer(figure, print_method=None, *, draw_disabled=False):
     """
     Get the renderer that would be used to save a `~.Figure`, and cache it on
     the figure.
@@ -1523,8 +1521,11 @@ def _get_renderer(figure, print_method, *, draw_disabled=False):
     def _draw(renderer): raise Done(renderer)
 
     with cbook._setattr_cm(figure, draw=_draw):
+        if print_method is None:
+            fmt = figure.canvas.get_default_filetype()
+            print_method = getattr(figure.canvas, f"print_{fmt}")
         try:
-            print_method(io.BytesIO())
+            print_method(io.BytesIO(), dpi=figure.dpi)
         except Done as exc:
             renderer, = figure._cachedRenderer, = exc.args
 
@@ -2092,7 +2093,7 @@ class FigureCanvasBase:
                     renderer = _get_renderer(
                         self.figure,
                         functools.partial(
-                            print_method, dpi=dpi, orientation=orientation),
+                            print_method, orientation=orientation),
                         draw_disabled=True)
                     self.figure.draw(renderer)
                     bbox_inches = self.figure.get_tightbbox(
@@ -2613,6 +2614,11 @@ class FigureManagerBase:
             # Called whenever the current axes is changed.
             if self.toolmanager is None and self.toolbar is not None:
                 self.toolbar.update()
+
+    @cbook.deprecated("3.3")
+    @property
+    def statusbar(self):
+        return None
 
     def show(self):
         """
@@ -3188,8 +3194,12 @@ class ToolContainerBase:
 
     def __init__(self, toolmanager):
         self.toolmanager = toolmanager
-        self.toolmanager.toolmanager_connect('tool_removed_event',
-                                             self._remove_tool_cbk)
+        toolmanager.toolmanager_connect(
+            'tool_message_event',
+            lambda event: self.set_message(event.message))
+        toolmanager.toolmanager_connect(
+            'tool_removed_event',
+            lambda event: self.remove_toolitem(event.tool.name))
 
     def _tool_toggled_cbk(self, event):
         """
@@ -3223,10 +3233,6 @@ class ToolContainerBase:
             # If initially toggled
             if tool.toggled:
                 self.toggle_toolitem(tool.name, True)
-
-    def _remove_tool_cbk(self, event):
-        """Capture the 'tool_removed_event' signal and removes the tool."""
-        self.remove_toolitem(event.tool.name)
 
     def _get_image_filename(self, image):
         """Find the image based on its name."""
@@ -3312,7 +3318,19 @@ class ToolContainerBase:
         """
         raise NotImplementedError
 
+    def set_message(self, s):
+        """
+        Display a message on the toolbar.
 
+        Parameters
+        ----------
+        s : str
+            Message text.
+        """
+        raise NotImplementedError
+
+
+@cbook.deprecated("3.3")
 class StatusbarBase:
     """Base class for the statusbar."""
     def __init__(self, toolmanager):
@@ -3333,7 +3351,6 @@ class StatusbarBase:
         s : str
             Message text.
         """
-        pass
 
 
 class _Backend:

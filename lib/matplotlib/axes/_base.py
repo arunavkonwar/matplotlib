@@ -217,7 +217,9 @@ class _process_plot_var_args:
         if not args:
             return
 
-        if data is not None:  # Process the 'data' kwarg.
+        if data is None:  # Process dict views
+            args = [cbook.sanitize_sequence(a) for a in args]
+        else:  # Process the 'data' kwarg.
             replaced = [mpl._replacer(data, arg) for arg in args]
             if len(args) == 1:
                 label_namer_idx = 0
@@ -262,6 +264,7 @@ class _process_plot_var_args:
 
         # Repeatedly grab (x, y) or (x, y, format) from the front of args and
         # massage them into arguments to plot() or fill().
+
         while args:
             this, args = args[:2], args[2:]
             if args and isinstance(args[0], str):
@@ -1336,10 +1339,6 @@ class _AxesBase(martist.Artist):
         if cbook._str_equal(aspect, 'equal'):
             aspect = 1
         if not cbook._str_equal(aspect, 'auto'):
-            if self.name == '3d':
-                raise NotImplementedError(
-                    'It is not currently possible to manually set the aspect '
-                    'on 3D axes')
             aspect = float(aspect)  # raise ValueError if necessary
 
         if share:
@@ -2294,6 +2293,7 @@ class _AxesBase(martist.Artist):
         if m <= -0.5:
             raise ValueError("margin must be greater than -0.5")
         self._xmargin = m
+        self._request_autoscale_view(scalex=True, scaley=False)
         self.stale = True
 
     def set_ymargin(self, m):
@@ -2316,6 +2316,7 @@ class _AxesBase(martist.Artist):
         if m <= -0.5:
             raise ValueError("margin must be greater than -0.5")
         self._ymargin = m
+        self._request_autoscale_view(scalex=False, scaley=True)
         self.stale = True
 
     def margins(self, *margins, x=None, y=None, tight=True):
@@ -2386,14 +2387,12 @@ class _AxesBase(martist.Artist):
                 cbook._warn_external(f'ignoring tight={tight!r} in get mode')
             return self._xmargin, self._ymargin
 
+        if tight is not None:
+            self._tight = tight
         if x is not None:
             self.set_xmargin(x)
         if y is not None:
             self.set_ymargin(y)
-
-        self._request_autoscale_view(
-            tight=tight, scalex=(x is not None), scaley=(y is not None)
-        )
 
     def set_rasterization_zorder(self, z):
         """
@@ -3332,6 +3331,9 @@ class _AxesBase(martist.Artist):
         left, right = sorted([left, right], reverse=bool(reverse))
 
         self._viewLim.intervalx = (left, right)
+        # Mark viewlims as no longer stale without triggering an autoscale.
+        for ax in self._shared_x_axes.get_siblings(self):
+            ax._stale_viewlim_x = False
         if auto is not None:
             self._autoscaleXon = bool(auto)
 
@@ -3601,6 +3603,9 @@ class _AxesBase(martist.Artist):
         bottom, top = sorted([bottom, top], reverse=bool(reverse))
 
         self._viewLim.intervaly = (bottom, top)
+        # Mark viewlims as no longer stale without triggering an autoscale.
+        for ax in self._shared_y_axes.get_siblings(self):
+            ax._stale_viewlim_y = False
         if auto is not None:
             self._autoscaleYon = bool(auto)
 

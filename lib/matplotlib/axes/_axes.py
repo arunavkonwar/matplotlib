@@ -1116,7 +1116,7 @@ class Axes(_AxesBase):
 
     @_preprocess_data(replace_names=["y", "xmin", "xmax", "colors"],
                       label_namer="y")
-    def hlines(self, y, xmin, xmax, colors='k', linestyles='solid',
+    def hlines(self, y, xmin, xmax, colors=None, linestyles='solid',
                label='', **kwargs):
         """
         Plot horizontal lines at each *y* from *xmin* to *xmax*.
@@ -1130,7 +1130,7 @@ class Axes(_AxesBase):
             Respective beginning and end of each line. If scalars are
             provided, all lines will have same length.
 
-        colors : list of colors, default: 'k'
+        colors : list of colors, default: :rc:`lines.color`
 
         linestyles : {'solid', 'dashed', 'dashdot', 'dotted'}, optional
 
@@ -1196,7 +1196,7 @@ class Axes(_AxesBase):
 
     @_preprocess_data(replace_names=["x", "ymin", "ymax", "colors"],
                       label_namer="x")
-    def vlines(self, x, ymin, ymax, colors='k', linestyles='solid',
+    def vlines(self, x, ymin, ymax, colors=None, linestyles='solid',
                label='', **kwargs):
         """
         Plot vertical lines.
@@ -1212,7 +1212,7 @@ class Axes(_AxesBase):
             Respective beginning and end of each line. If scalars are
             provided, all lines will have same length.
 
-        colors : list of colors, default: 'k'
+        colors : list of colors, default: :rc:`lines.color`
 
         linestyles : {'solid', 'dashed', 'dashdot', 'dotted'}, optional
 
@@ -1810,11 +1810,7 @@ class Axes(_AxesBase):
             self.xaxis_date(tz)
         if ydate:
             self.yaxis_date(tz)
-        ret = self.plot(x, y, fmt, **kwargs)
-
-        self._request_autoscale_view()
-
-        return ret
+        return self.plot(x, y, fmt, **kwargs)
 
     # @_preprocess_data() # let 'plot' do the unpacking..
     @docstring.dedent_interpd
@@ -2351,10 +2347,6 @@ class Axes(_AxesBase):
         log : bool, default: False
             If *True*, set the y-axis to be log scale.
 
-        orientation : {'vertical',  'horizontal'}, optional
-            *This is for internal use only.* Please use `barh` for
-            horizontal bar plots. Default: 'vertical'.
-
         **kwargs : `.Rectangle` properties
 
         %(Rectangle)s
@@ -2393,6 +2385,9 @@ class Axes(_AxesBase):
         error_kw.setdefault('ecolor', ecolor)
         error_kw.setdefault('capsize', capsize)
 
+        # The keyword argument *orientation* is used by barh() to defer all
+        # logic and drawing to bar(). It is considered internal and is
+        # intentionally not mentioned in the docstring.
         orientation = kwargs.pop('orientation', 'vertical')
         cbook._check_in_list(['vertical', 'horizontal'],
                              orientation=orientation)
@@ -2754,7 +2749,7 @@ class Axes(_AxesBase):
             Note: While it is technically possible to specify valid formats
             other than color or color and linestyle (e.g. 'rx' or '-.'), this
             is beyond the intention of the method and will most likely not
-            result in a reasonable reasonable plot.
+            result in a reasonable plot.
 
         markerfmt : str, optional
             A string defining the properties of the markers at the stem heads.
@@ -3200,10 +3195,13 @@ class Axes(_AxesBase):
 
         lolims, uplims, xlolims, xuplims : bool, default: False
             These arguments can be used to indicate that a value gives only
-            upper/lower limits. In that case a caret symbol is used to
-            indicate this. *lims*-arguments may be of the same type as *xerr*
-            and *yerr*.  To use limits with inverted axes, `~.Axes.set_xlim`
-            or `~.Axes.set_ylim` must be called before :meth:`errorbar`.
+            upper/lower limits.  In that case a caret symbol is used to
+            indicate this. *lims*-arguments may be scalars, or array-likes of
+            the same length as *xerr* and *yerr*.  To use limits with inverted
+            axes, `~.Axes.set_xlim` or `~.Axes.set_ylim` must be called before
+            :meth:`errorbar`.  Note the tricky parameter names: setting e.g.
+            *lolims* to True means that the y-value is a *lower* limit of the
+            True value, so, only an *upward*-pointing arrow will be drawn!
 
         errorevery : int or (int, int), default: 1
             draws error bars on a subset of the data. *errorevery* =N draws
@@ -3297,6 +3295,9 @@ class Axes(_AxesBase):
         if not np.iterable(y):
             y = [y]
 
+        if len(x) != len(y):
+            raise ValueError("'x' and 'y' must have the same size")
+
         if xerr is not None:
             if not np.iterable(xerr):
                 xerr = [xerr] * len(x)
@@ -3369,22 +3370,29 @@ class Axes(_AxesBase):
         everymask = np.zeros(len(x), bool)
         everymask[offset::errorevery] = True
 
-        def xywhere(xs, ys, mask):
-            """
-            Return xs[mask], ys[mask] where mask is True but xs and
-            ys are not arrays.
-            """
-            assert len(xs) == len(ys)
-            assert len(xs) == len(mask)
-            xs = [thisx for thisx, b in zip(xs, mask) if b]
-            ys = [thisy for thisy, b in zip(ys, mask) if b]
-            return xs, ys
+        def apply_mask(arrays, mask):
+            # Return, for each array in *arrays*, the elements for which *mask*
+            # is True, without using fancy indexing.
+            return [[*itertools.compress(array, mask)] for array in arrays]
 
-        def extract_err(name, err, data):
+        def extract_err(name, err, data, lolims, uplims):
             """
-            Private function to parse *err* and subtract/add it to *data*.
+            Private function to compute error bars.
 
-            Both *err* and *data* are already iterables at this point.
+            Parameters
+            ----------
+            name : {'x', 'y'}
+                Name used in the error message.
+            err : array-like
+                xerr or yerr from errorbar().
+            data : array-like
+                x or y from errorbar().
+            lolims : array-like
+                Error is only applied on **upper** side when this is True.  See
+                the note in the main docstring about this parameter's name.
+            uplims : array-like
+                Error is only applied on **lower** side when this is True.  See
+                the note in the main docstring about this parameter's name.
             """
             try:  # Asymmetric error: pair of 1D iterables.
                 a, b = err
@@ -3401,116 +3409,92 @@ class Axes(_AxesBase):
                     raise ValueError(
                         f"The lengths of the data ({len(data)}) and the "
                         f"error {len(e)} do not match")
-            low = [v - e for v, e in zip(data, a)]
-            high = [v + e for v, e in zip(data, b)]
+            low = [v if lo else v - e for v, e, lo in zip(data, a, lolims)]
+            high = [v if up else v + e for v, e, up in zip(data, b, uplims)]
             return low, high
 
         if xerr is not None:
-            left, right = extract_err('x', xerr, x)
+            left, right = extract_err('x', xerr, x, xlolims, xuplims)
+            barcols.append(self.hlines(
+                *apply_mask([y, left, right], everymask), **eb_lines_style))
             # select points without upper/lower limits in x and
             # draw normal errorbars for these points
             noxlims = ~(xlolims | xuplims)
-            if noxlims.any() or len(noxlims) == 0:
-                yo, _ = xywhere(y, right, noxlims & everymask)
-                lo, ro = xywhere(left, right, noxlims & everymask)
-                barcols.append(self.hlines(yo, lo, ro, **eb_lines_style))
-                if capsize > 0:
-                    caplines.append(mlines.Line2D(lo, yo, marker='|',
-                                                  **eb_cap_style))
-                    caplines.append(mlines.Line2D(ro, yo, marker='|',
-                                                  **eb_cap_style))
-
+            if noxlims.any() and capsize > 0:
+                yo, lo, ro = apply_mask([y, left, right], noxlims & everymask)
+                caplines.extend([
+                    mlines.Line2D(lo, yo, marker='|', **eb_cap_style),
+                    mlines.Line2D(ro, yo, marker='|', **eb_cap_style)])
             if xlolims.any():
-                yo, _ = xywhere(y, right, xlolims & everymask)
-                lo, ro = xywhere(x, right, xlolims & everymask)
-                barcols.append(self.hlines(yo, lo, ro, **eb_lines_style))
-                rightup, yup = xywhere(right, y, xlolims & everymask)
+                xo, yo, lo, ro = apply_mask([x, y, left, right],
+                                            xlolims & everymask)
                 if self.xaxis_inverted():
                     marker = mlines.CARETLEFTBASE
                 else:
                     marker = mlines.CARETRIGHTBASE
-                caplines.append(
-                    mlines.Line2D(rightup, yup, ls='None', marker=marker,
-                                  **eb_cap_style))
+                caplines.append(mlines.Line2D(
+                    ro, yo, ls='None', marker=marker, **eb_cap_style))
                 if capsize > 0:
-                    xlo, ylo = xywhere(x, y, xlolims & everymask)
-                    caplines.append(mlines.Line2D(xlo, ylo, marker='|',
-                                                  **eb_cap_style))
-
+                    caplines.append(mlines.Line2D(
+                        xo, yo, marker='|', **eb_cap_style))
             if xuplims.any():
-                yo, _ = xywhere(y, right, xuplims & everymask)
-                lo, ro = xywhere(left, x, xuplims & everymask)
-                barcols.append(self.hlines(yo, lo, ro, **eb_lines_style))
-                leftlo, ylo = xywhere(left, y, xuplims & everymask)
+                xo, yo, lo, ro = apply_mask([x, y, left, right],
+                                            xuplims & everymask)
                 if self.xaxis_inverted():
                     marker = mlines.CARETRIGHTBASE
                 else:
                     marker = mlines.CARETLEFTBASE
-                caplines.append(
-                    mlines.Line2D(leftlo, ylo, ls='None', marker=marker,
-                                  **eb_cap_style))
+                caplines.append(mlines.Line2D(
+                    lo, yo, ls='None', marker=marker, **eb_cap_style))
                 if capsize > 0:
-                    xup, yup = xywhere(x, y, xuplims & everymask)
-                    caplines.append(mlines.Line2D(xup, yup, marker='|',
-                                                  **eb_cap_style))
+                    caplines.append(mlines.Line2D(
+                        xo, yo, marker='|', **eb_cap_style))
 
         if yerr is not None:
-            lower, upper = extract_err('y', yerr, y)
+            lower, upper = extract_err('y', yerr, y, lolims, uplims)
+            barcols.append(self.vlines(
+                *apply_mask([x, lower, upper], everymask), **eb_lines_style))
             # select points without upper/lower limits in y and
             # draw normal errorbars for these points
             noylims = ~(lolims | uplims)
-            if noylims.any() or len(noylims) == 0:
-                xo, _ = xywhere(x, lower, noylims & everymask)
-                lo, uo = xywhere(lower, upper, noylims & everymask)
-                barcols.append(self.vlines(xo, lo, uo, **eb_lines_style))
-                if capsize > 0:
-                    caplines.append(mlines.Line2D(xo, lo, marker='_',
-                                                  **eb_cap_style))
-                    caplines.append(mlines.Line2D(xo, uo, marker='_',
-                                                  **eb_cap_style))
-
+            if noylims.any() and capsize > 0:
+                xo, lo, uo = apply_mask([x, lower, upper], noylims & everymask)
+                caplines.extend([
+                    mlines.Line2D(xo, lo, marker='_', **eb_cap_style),
+                    mlines.Line2D(xo, uo, marker='_', **eb_cap_style)])
             if lolims.any():
-                xo, _ = xywhere(x, lower, lolims & everymask)
-                lo, uo = xywhere(y, upper, lolims & everymask)
-                barcols.append(self.vlines(xo, lo, uo, **eb_lines_style))
-                xup, upperup = xywhere(x, upper, lolims & everymask)
+                xo, yo, lo, uo = apply_mask([x, y, lower, upper],
+                                            lolims & everymask)
                 if self.yaxis_inverted():
                     marker = mlines.CARETDOWNBASE
                 else:
                     marker = mlines.CARETUPBASE
-                caplines.append(
-                    mlines.Line2D(xup, upperup, ls='None', marker=marker,
-                                  **eb_cap_style))
+                caplines.append(mlines.Line2D(
+                    xo, uo, ls='None', marker=marker, **eb_cap_style))
                 if capsize > 0:
-                    xlo, ylo = xywhere(x, y, lolims & everymask)
-                    caplines.append(mlines.Line2D(xlo, ylo, marker='_',
-                                                  **eb_cap_style))
-
+                    caplines.append(mlines.Line2D(
+                        xo, yo, marker='_', **eb_cap_style))
             if uplims.any():
-                xo, _ = xywhere(x, lower, uplims & everymask)
-                lo, uo = xywhere(lower, y, uplims & everymask)
-                barcols.append(self.vlines(xo, lo, uo, **eb_lines_style))
-                xlo, lowerlo = xywhere(x, lower, uplims & everymask)
+                xo, yo, lo, uo = apply_mask([x, y, lower, upper],
+                                            uplims & everymask)
                 if self.yaxis_inverted():
                     marker = mlines.CARETUPBASE
                 else:
                     marker = mlines.CARETDOWNBASE
-                caplines.append(
-                    mlines.Line2D(xlo, lowerlo, ls='None', marker=marker,
-                                  **eb_cap_style))
+                caplines.append(mlines.Line2D(
+                    xo, lo, ls='None', marker=marker, **eb_cap_style))
                 if capsize > 0:
-                    xup, yup = xywhere(x, y, uplims & everymask)
-                    caplines.append(mlines.Line2D(xup, yup, marker='_',
-                                                  **eb_cap_style))
+                    caplines.append(mlines.Line2D(
+                        xo, yo, marker='_', **eb_cap_style))
+
         for l in caplines:
             self.add_line(l)
 
         self._request_autoscale_view()
-        errorbar_container = ErrorbarContainer((data_line, tuple(caplines),
-                                                tuple(barcols)),
-                                               has_xerr=(xerr is not None),
-                                               has_yerr=(yerr is not None),
-                                               label=label)
+        errorbar_container = ErrorbarContainer(
+            (data_line, tuple(caplines), tuple(barcols)),
+            has_xerr=(xerr is not None), has_yerr=(yerr is not None),
+            label=label)
         self.containers.append(errorbar_container)
 
         return errorbar_container  # (l0, caplines, barcols)
@@ -3778,7 +3762,7 @@ class Axes(_AxesBase):
                         stats['med'] = med
 
         if conf_intervals is not None:
-            if np.shape(conf_intervals)[0] != len(bxpstats):
+            if len(conf_intervals) != len(bxpstats):
                 raise ValueError(
                     "'conf_intervals' and 'x' have different lengths")
             else:
@@ -4281,19 +4265,26 @@ class Axes(_AxesBase):
             except ValueError:
                 pass  # Failed to convert to float array; must be color specs.
             else:
+                # handle the documented special case of a 2D array with 1
+                # row which as RGB(A) to broadcast.
+                if c.shape == (1, 4) or c.shape == (1, 3):
+                    c_is_mapped = False
+                    if c.size != xsize:
+                        valid_shape = False
                 # If c can be either mapped values or a RGB(A) color, prefer
                 # the former if shapes match, the latter otherwise.
-                if c.size == xsize:
+                elif c.size == xsize:
                     c = c.ravel()
                     c_is_mapped = True
                 else:  # Wrong size; it must not be intended for mapping.
                     if c.shape in ((3,), (4,)):
                         _log.warning(
-                            "'c' argument looks like a single numeric RGB or "
+                            "*c* argument looks like a single numeric RGB or "
                             "RGBA sequence, which should be avoided as value-"
                             "mapping will have precedence in case its length "
-                            "matches with 'x' & 'y'.  Please use a 2-D array "
-                            "with a single row if you really want to specify "
+                            "matches with *x* & *y*.  Please use the *color* "
+                            "keyword-argument or provide a 2-D array "
+                            "with a single row if you intend to specify "
                             "the same RGB or RGBA value for all points.")
                     valid_shape = False
         if not c_is_mapped:
@@ -4340,14 +4331,14 @@ class Axes(_AxesBase):
             The marker size in points**2.
             Default is ``rcParams['lines.markersize'] ** 2``.
 
-        c : color or list of colors or array-like, optional
-            The marker color. Possible values:
+        c : array-like or list of colors or color, optional
+            The marker colors. Possible values:
 
-            - A single color format string.
-            - A sequence of colors of length n.
             - A scalar or sequence of n numbers to be mapped to colors using
               *cmap* and *norm*.
             - A 2-D array in which the rows are RGB or RGBA.
+            - A sequence of colors of length n.
+            - A single color format string.
 
             Note that *c* should not be a single numeric RGB or RGBA sequence
             because that is indistinguishable from an array of values to be
@@ -4356,9 +4347,12 @@ class Axes(_AxesBase):
             matching will have precedence in case of a size matching with *x*
             and *y*.
 
-            Defaults to ``None``. In that case the marker color is determined
-            by the value of ``color``, ``facecolor`` or ``facecolors``. In case
-            those are not specified or ``None``, the marker color is determined
+            If you wish to specify a single color for all points
+            prefer the *color* keyword argument.
+
+            Defaults to `None`. In that case the marker color is determined
+            by the value of *color*, *facecolor* or *facecolors*. In case
+            those are not specified or `None`, the marker color is determined
             by the next color of the ``Axes``' current "shape and fill" color
             cycle. This cycle defaults to :rc:`axes.prop_cycle`.
 
@@ -4399,8 +4393,9 @@ default: :rc:`scatter.edgecolors`
             - 'none': No patch boundary will be drawn.
             - A color or sequence of colors.
 
-            For non-filled markers, the *edgecolors* kwarg is ignored and
-            forced to 'face' internally.
+            For non-filled markers, *edgecolors* is ignored. Instead, the color
+            is determined like with 'face', i.e. from *c*, *colors*, or
+            *facecolors*.
 
         plotnonfinite : bool, default: False
             Set to plot points with nonfinite *c*, in conjunction with
@@ -4482,15 +4477,19 @@ default: :rc:`scatter.edgecolors`
         path = marker_obj.get_path().transformed(
             marker_obj.get_transform())
         if not marker_obj.is_filled():
-            edgecolors = 'face'
-            linewidths = rcParams['lines.linewidth']
+            if linewidths is None:
+                linewidths = rcParams['lines.linewidth']
+            elif np.iterable(linewidths):
+                linewidths = [
+                    lw if lw is not None else rcParams['lines.linewidth']
+                    for lw in linewidths]
 
         offsets = np.ma.column_stack([x, y])
 
         collection = mcoll.PathCollection(
                 (path,), scales,
-                facecolors=colors,
-                edgecolors=edgecolors,
+                facecolors=colors if marker_obj.is_filled() else 'none',
+                edgecolors=edgecolors if marker_obj.is_filled() else colors,
                 linewidths=linewidths,
                 offsets=offsets,
                 transOffset=kwargs.pop('transform', self.transData),
@@ -6555,8 +6554,6 @@ such objects
         if histtype == 'barstacked' and not stacked:
             stacked = True
 
-        # basic input validation
-        input_empty = np.size(x) == 0
         # Massage 'x' for processing.
         x = cbook._reshape_2D(x, 'x')
         nx = len(x)  # number of datasets
@@ -6581,9 +6578,13 @@ such objects
         if len(w) != nx:
             raise ValueError('weights should have the same shape as x')
 
+        input_empty = True
         for xi, wi in zip(x, w):
-            if wi is not None and len(wi) != len(xi):
+            len_xi = len(xi)
+            if wi is not None and len(wi) != len_xi:
                 raise ValueError('weights should have the same shape as x')
+            if len_xi:
+                input_empty = False
 
         if color is None:
             color = [self._get_lines.get_next_color() for i in range(nx)]

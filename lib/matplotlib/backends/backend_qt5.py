@@ -105,7 +105,7 @@ def _create_qApp():
         app = QtWidgets.QApplication.instance()
         if app is None:
             # check for DISPLAY env variable on X11 build of Qt
-            if QtCore.QT_VERSION_STR >= "5.":
+            if QtCore.qVersion() >= "5.":
                 try:
                     importlib.import_module(
                         # i.e. PyQt5.QtX11Extras or PySide2.QtX11Extras.
@@ -331,7 +331,7 @@ class FigureCanvasQT(QtWidgets.QWidget, FigureCanvasBase):
             FigureCanvasBase.button_release_event(self, x, y, button,
                                                   guiEvent=event)
 
-    if QtCore.QT_VERSION_STR >= "5.":
+    if QtCore.qVersion() >= "5.":
         def wheelEvent(self, event):
             x, y = self.mouseEventCoords(event)
             # from QWheelEvent::delta doc
@@ -460,6 +460,15 @@ class FigureCanvasQT(QtWidgets.QWidget, FigureCanvasBase):
             self._draw_pending = True
             QtCore.QTimer.singleShot(0, self._draw_idle)
 
+    def blit(self, bbox=None):
+        # docstring inherited
+        if bbox is None and self.figure:
+            bbox = self.figure.bbox  # Blit the entire canvas if bbox is None.
+        # repaint uses logical pixels, not physical pixels like the renderer.
+        l, b, w, h = [pt / self._dpi_ratio for pt in bbox.bounds]
+        t = b + h
+        self.repaint(l, self.rect().height() - t, w, h)
+
     def _draw_idle(self):
         with self._idle_draw_cntx():
             if not self._draw_pending:
@@ -477,7 +486,7 @@ class FigureCanvasQT(QtWidgets.QWidget, FigureCanvasBase):
         # Draw the zoom rectangle to the QPainter.  _draw_rect_callback needs
         # to be called at the end of paintEvent.
         if rect is not None:
-            x0, y0, w, h = [pt / self._dpi_ratio for pt in rect]
+            x0, y0, w, h = [int(pt / self._dpi_ratio) for pt in rect]
             x1 = x0 + w
             y1 = y0 + h
             def _draw_rect_callback(painter):
@@ -543,18 +552,13 @@ class FigureManagerQT(FigureManagerBase):
         self.window._destroying = False
 
         self.toolbar = self._get_toolbar(self.canvas, self.window)
-        self.statusbar = None
 
         if self.toolmanager:
             backend_tools.add_tools_to_manager(self.toolmanager)
             if self.toolbar:
                 backend_tools.add_tools_to_container(self.toolbar)
-                self.statusbar = StatusbarQt(self.window, self.toolmanager)
-                sbs_height = self.statusbar.sizeHint().height()
-        else:
-            sbs_height = 0
 
-        if self.toolbar is not None:
+        if self.toolbar:
             self.window.addToolBar(self.toolbar)
             tbs_height = self.toolbar.sizeHint().height()
         else:
@@ -564,7 +568,7 @@ class FigureManagerQT(FigureManagerBase):
         # requested size:
         cs = canvas.sizeHint()
         cs_height = cs.height()
-        height = cs_height + tbs_height + sbs_height
+        height = cs_height + tbs_height
         self.window.resize(cs.width(), height)
 
         self.window.setCentralWidget(self.canvas)
@@ -652,7 +656,6 @@ class NavigationToolbar2QT(NavigationToolbar2, QtWidgets.QToolBar):
         self.setAllowedAreas(
             QtCore.Qt.TopToolBarArea | QtCore.Qt.BottomToolBarArea)
 
-        self._parent = parent
         self.coordinates = coordinates
         self._actions = {}  # mapping of toolitem method names to QActions.
 
@@ -683,8 +686,15 @@ class NavigationToolbar2QT(NavigationToolbar2, QtWidgets.QToolBar):
 
         NavigationToolbar2.__init__(self, canvas)
 
-    parent = cbook._deprecate_privatize_attribute(
-        "3.3", alternative="self.canvas.parent()")
+    @cbook.deprecated("3.3", alternative="self.canvas.parent()")
+    @property
+    def parent(self):
+        return self.canvas.parent()
+
+    @cbook.deprecated("3.3", alternative="self.canvas.setParent()")
+    @parent.setter
+    def parent(self, value):
+        pass
 
     @cbook.deprecated(
         "3.3", alternative="os.path.join(mpl.get_data_path(), 'images')")
@@ -693,7 +703,11 @@ class NavigationToolbar2QT(NavigationToolbar2, QtWidgets.QToolBar):
         return str(cbook._get_data_path('images'))
 
     def _icon(self, name):
-        if QtCore.QT_VERSION_STR >= '5.':
+        """
+        Construct a `.QIcon` from an image file *name*, including the extension
+        and relative to Matplotlib's "images" data directory.
+        """
+        if QtCore.qVersion() >= '5.':
             name = name.replace('.png', '_large.png')
         pm = QtGui.QPixmap(str(cbook._get_data_path('images', name)))
         qt_compat._setDevicePixelRatio(pm, qt_compat._devicePixelRatio(self))
@@ -888,6 +902,13 @@ class ToolbarQt(ToolContainerBase, QtWidgets.QToolBar):
         QtWidgets.QToolBar.__init__(self, parent)
         self.setAllowedAreas(
             QtCore.Qt.TopToolBarArea | QtCore.Qt.BottomToolBarArea)
+        message_label = QtWidgets.QLabel("")
+        message_label.setAlignment(
+            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        message_label.setSizePolicy(
+            QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                  QtWidgets.QSizePolicy.Ignored))
+        self._message_action = self.addWidget(message_label)
         self._toolitems = {}
         self._groups = {}
 
@@ -915,7 +936,7 @@ class ToolbarQt(ToolContainerBase, QtWidgets.QToolBar):
     def _add_to_group(self, group, name, button, position):
         gr = self._groups.get(group, [])
         if not gr:
-            sep = self.addSeparator()
+            sep = self.insertSeparator(self._message_action)
             gr.append(sep)
         before = gr[position]
         widget = self.insertWidget(before, button)
@@ -935,7 +956,11 @@ class ToolbarQt(ToolContainerBase, QtWidgets.QToolBar):
             button.setParent(None)
         del self._toolitems[name]
 
+    def set_message(self, s):
+        self.widgetForAction(self._message_action).setText(s)
 
+
+@cbook.deprecated("3.3")
 class StatusbarQt(StatusbarBase, QtWidgets.QLabel):
     def __init__(self, window, *args, **kwargs):
         StatusbarBase.__init__(self, *args, **kwargs)

@@ -26,7 +26,7 @@ from matplotlib.backend_bases import (
 from matplotlib.cbook import is_writable_file_like, file_requires_unicode
 from matplotlib.font_manager import is_opentype_cff_font, get_font
 from matplotlib.ft2font import LOAD_NO_HINTING
-from matplotlib.ttconv import convert_ttf_to_ps
+from matplotlib._ttconv import convert_ttf_to_ps
 from matplotlib.mathtext import MathTextParser
 from matplotlib._mathtext_data import uni2type1
 from matplotlib.path import Path
@@ -467,6 +467,7 @@ translate
 
         self._path_collection_id += 1
 
+    @cbook._delete_parameter("3.3", "ismath")
     def draw_tex(self, gc, x, y, s, prop, angle, ismath='TeX!', mtext=None):
         # docstring inherited
         if not hasattr(self, "psfrag"):
@@ -475,10 +476,10 @@ translate
                 "rcParams['text.usetex'] and does not support having "
                 "usetex=True only for some elements; this element will thus "
                 "be rendered as if usetex=False.")
-            self.draw_text(gc, x, y, s, prop, angle, ismath, mtext)
+            self.draw_text(gc, x, y, s, prop, angle, False, mtext)
             return
 
-        w, h, bl = self.get_text_width_height_descent(s, prop, ismath)
+        w, h, bl = self.get_text_width_height_descent(s, prop, ismath="TeX")
         fontsize = prop.get_size_in_points()
         thetext = 'psmarker%d' % self.textcnt
         color = '%1.3f,%1.3f,%1.3f' % gc.get_rgb()[:3]

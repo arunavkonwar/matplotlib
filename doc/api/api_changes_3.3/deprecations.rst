@@ -137,9 +137,10 @@ This method is deprecated.  Use
 ``SymmetricalScale.InvertedSymmetricalTransform`` are deprecated.  Directly
 access the transform classes from the :mod:`.scale` module.
 
-``TexManager.cachedir``
-~~~~~~~~~~~~~~~~~~~~~~~
-Use `matplotlib.get_cachedir()` instead.
+``TexManager.cachedir``, ``TexManager.rgba_arrayd``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Use `matplotlib.get_cachedir()` instead for the former; there is no replacement
+for the latter.
 
 Setting `.Line2D`\'s pickradius via `.Line2D.set_picker`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -237,7 +238,8 @@ The following validators, defined in `.rcsetup`, are deprecated:
 ``validate_axes_titlelocation``, ``validate_toolbar``,
 ``validate_ps_papersize``, ``validate_legend_loc``,
 ``validate_bool_maybe_none``, ``validate_hinting``,
-``validate_movie_writers``, ``validate_webagg_address``.
+``validate_movie_writers``, ``validate_webagg_address``,
+``validate_nseq_float``, ``validate_nseq_int``.
 To test whether an rcParam value would be acceptable, one can test e.g. ``rc =
 RcParams(); rc[k] = v`` raises an exception.
 
@@ -405,6 +407,16 @@ what the docs stated).  They are deprecated; if you write a backend
 which needs to customize such events, please directly override
 ``press_pan``/``press_zoom``/``release_pan``/``release_zoom`` instead.
 
+FigureCanvasGTK3._renderer_init
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Overriding this method to initialize renderers for GTK3 canvases is deprecated.
+Instead, the renderer should be initialized in the ``__init__`` method of the
+subclass (which should call the base-class' ``__init__`` as appropriate).  To
+keep back-compatibility with earlier versions of Matplotlib (which *required*
+``_renderer_init`` to be overridden), a fully empty implementation (``def
+_renderer_init(self): pass``) may be kept and will not trigger the deprecation
+warning.
+
 Path helpers in :mod:`.bezier`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -544,7 +556,7 @@ The ``cbid`` and ``locator`` attribute are deprecated.  Use
 ``qt_compat.is_pyqt5``
 ~~~~~~~~~~~~~~~~~~~~~~
 This function is deprecated in prevision of the future release of PyQt6.  The
-Qt version can be checked using ``QtCore.QT_VERSION_STR``.
+Qt version can be checked using ``QtCore.qVersion()``.
 
 Reordering of parameters by `.Artist.set`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -554,3 +566,30 @@ in which they are given.  This only affects the interaction between the
 properties: the *color* property now needs to be passed first in order not to
 override the other properties.  This is consistent with e.g. `.Artist.update`,
 which did not reorder the properties passed to it.
+
+Passing multiple keys as a single comma-separated string or multiple arguments to `.ToolManager.update_keymap`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+This is deprecated; pass keys as a list of strings instead.
+
+Statusbar classes and attributes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The ``statusbar`` attribute of `.FigureManagerBase`, `.StatusbarBase` and all
+its subclasses, and ``StatusBarWx``, are deprecated, as messages are now
+displayed in the toolbar instead.
+
+``ismath`` parameter of ``draw_tex``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The ``ismath`` parameter of the ``draw_tex`` method of all renderer classes is
+deprecated (as a call to ``draw_tex`` -- not to be confused with ``draw_text``!
+-- means that the entire string should be passed to the ``usetex`` machinery
+anyways).  Likewise, the text machinery will no longer pass the ``ismath``
+parameter when calling ``draw_tex`` (this should only matter for backend
+implementers).
+
+Passing ``ismath="TeX!"`` to `.RendererAgg.get_text_width_height_descent` is
+deprecated.  Pass ``ismath="TeX"`` instead, consistently with other low-level
+APIs which support the values True, False, and "TeX" for ``ismath``.
+
+``matplotlib.ttconv``
+~~~~~~~~~~~~~~~~~~~~~
+This module is deprecated.

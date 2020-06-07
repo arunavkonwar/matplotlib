@@ -13,6 +13,9 @@ import pathlib
 import sys
 import weakref
 
+import numpy as np
+import PIL
+
 import matplotlib as mpl
 from matplotlib.backend_bases import (
     _Backend, FigureCanvasBase, FigureManagerBase, GraphicsContextBase,
@@ -623,7 +626,9 @@ class _FigureCanvasWxBase(FigureCanvasBase, wx.Panel):
         The 'WXAgg' backend sets origin accordingly.
         """
         _log.debug("%s - gui_repaint()", type(self))
-        if self.IsShownOnScreen():
+        # The "if self" check avoids a "wrapped C/C++ object has been deleted"
+        # RuntimeError if doing things after window is closed.
+        if self and self.IsShownOnScreen():
             if not drawDC:
                 # not called from OnPaint use a ClientDC
                 drawDC = wx.ClientDC(self)
@@ -881,14 +886,11 @@ class FigureCanvasWx(_FigureCanvasWxBase):
 
         # Now that we have rendered into the bitmap, save it to the appropriate
         # file type and clean up.
-        if isinstance(filename, str):
-            if not image.SaveFile(filename, filetype):
-                raise RuntimeError(f'Could not save figure to {filename}')
-        elif cbook.is_writable_file_like(filename):
-            if not isinstance(image, wx.Image):
-                image = image.ConvertToImage()
-            if not image.SaveStream(filename, filetype):
-                raise RuntimeError(f'Could not save figure to {filename}')
+        if (cbook.is_writable_file_like(filename) and
+                not isinstance(image, wx.Image)):
+            image = image.ConvertToImage()
+        if not image.SaveFile(filename, filetype):
+            raise RuntimeError(f'Could not save figure to {filename}')
 
         # Restore everything to normal
         self.bitmap = origBitmap
@@ -900,7 +902,10 @@ class FigureCanvasWx(_FigureCanvasWxBase):
         # otherwise.
         if self._isDrawn:
             self.draw()
-        self.Refresh()
+        # The "if self" check avoids a "wrapped C/C++ object has been deleted"
+        # RuntimeError if doing things after window is closed.
+        if self:
+            self.Refresh()
 
 
 class FigureFrameWx(wx.Frame):
@@ -931,7 +936,6 @@ class FigureFrameWx(wx.Frame):
         self.toolbar = self._get_toolbar()
 
         if self.figmgr.toolmanager:
-            self.SetStatusBar(StatusbarWx(self, self.figmgr.toolmanager))
             backend_tools.add_tools_to_manager(self.figmgr.toolmanager)
             if self.toolbar:
                 backend_tools.add_tools_to_container(self.toolbar)
@@ -1103,6 +1107,8 @@ class NavigationToolbar2Wx(NavigationToolbar2, wx.ToolBar):
     def __init__(self, canvas):
         wx.ToolBar.__init__(self, canvas.GetParent(), -1)
 
+        if 'wxMac' in wx.PlatformInfo:
+            self.SetToolBitmapSize((24, 24))
         self.wx_ids = {}
         for text, tooltip_text, image_file, callback in self.toolitems:
             if text is None:
@@ -1111,7 +1117,7 @@ class NavigationToolbar2Wx(NavigationToolbar2, wx.ToolBar):
             self.wx_ids[text] = (
                 self.AddTool(
                     -1,
-                    bitmap=_load_bitmap(f"{image_file}.png"),
+                    bitmap=self._icon(f"{image_file}.png"),
                     bmpDisabled=wx.NullBitmap,
                     label=text, shortHelp=text, longHelp=tooltip_text,
                     kind=(wx.ITEM_CHECK if text in ["Pan", "Zoom"]
@@ -1142,6 +1148,31 @@ class NavigationToolbar2Wx(NavigationToolbar2, wx.ToolBar):
     zoomAxes = cbook._deprecate_privatize_attribute("3.3")
     zoomStartX = cbook._deprecate_privatize_attribute("3.3")
     zoomStartY = cbook._deprecate_privatize_attribute("3.3")
+
+    @staticmethod
+    def _icon(name):
+        """
+        Construct a `wx.Bitmap` suitable for use as icon from an image file
+        *name*, including the extension and relative to Matplotlib's "images"
+        data directory.
+        """
+        image = np.array(PIL.Image.open(cbook._get_data_path("images", name)))
+        try:
+            dark = wx.SystemSettings.GetAppearance().IsDark()
+        except AttributeError:  # wxpython < 4.1
+            # copied from wx's IsUsingDarkBackground / GetLuminance.
+            bg = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)
+            fg = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
+            # See wx.Colour.GetLuminance.
+            bg_lum = (.299 * bg.red + .587 * bg.green + .114 * bg.blue) / 255
+            fg_lum = (.299 * fg.red + .587 * fg.green + .114 * fg.blue) / 255
+            dark = fg_lum - bg_lum > .2
+        if dark:
+            fg = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
+            black_mask = (image[..., :3] == 0).all(axis=-1)
+            image[black_mask, :3] = (fg.Red(), fg.Green(), fg.Blue())
+        return wx.Bitmap.FromBufferRGBA(
+            image.shape[1], image.shape[0], image.tobytes())
 
     def get_canvas(self, frame, fig):
         return type(self.canvas)(frame, -1, fig)
@@ -1313,6 +1344,7 @@ class NavigationToolbar2Wx(NavigationToolbar2, wx.ToolBar):
             self.EnableTool(self.wx_ids['Forward'], can_forward)
 
 
+@cbook.deprecated("3.3")
 class StatusBarWx(wx.StatusBar):
     """
     A status bar is added to _FigureFrame to allow measurements and the
@@ -1333,15 +1365,45 @@ class ToolbarWx(ToolContainerBase, wx.ToolBar):
     def __init__(self, toolmanager, parent, style=wx.TB_HORIZONTAL):
         ToolContainerBase.__init__(self, toolmanager)
         wx.ToolBar.__init__(self, parent, -1, style=style)
+        self._space = self.AddStretchableSpace()
+        self._label_text = wx.StaticText(self)
+        self.AddControl(self._label_text)
         self._toolitems = {}
-        self._groups = {}
+        self._groups = {}  # Mapping of groups to the separator after them.
+
+    def _get_tool_pos(self, tool):
+        """
+        Find the position (index) of a wx.ToolBarToolBase in a ToolBar.
+
+        ``ToolBar.GetToolPos`` is not useful because wx assigns the same Id to
+        all Separators and StretchableSpaces.
+        """
+        pos, = [pos for pos in range(self.ToolsCount)
+                if self.GetToolByPos(pos) == tool]
+        return pos
 
     def add_toolitem(self, name, group, position, image_file, description,
                      toggle):
-        before, group = self._add_to_group(group, name, position)
-        idx = self.GetToolPos(before.Id)
+        # Find or create the separator that follows this group.
+        if group not in self._groups:
+            self._groups[group] = self.InsertSeparator(
+                self._get_tool_pos(self._space))
+        sep = self._groups[group]
+        # List all separators.
+        seps = [t for t in map(self.GetToolByPos, range(self.ToolsCount))
+                if t.IsSeparator() and not t.IsStretchableSpace()]
+        # Find where to insert the tool.
+        if position >= 0:
+            # Find the start of the group by looking for the separator
+            # preceding this one; then move forward from it.
+            start = (0 if sep == seps[0]
+                     else self._get_tool_pos(seps[seps.index(sep) - 1]) + 1)
+        else:
+            # Move backwards from this separator.
+            start = self._get_tool_pos(sep) + 1
+        idx = start + position
         if image_file:
-            bmp = _load_bitmap(image_file)
+            bmp = NavigationToolbar2Wx._icon(image_file)
             kind = wx.ITEM_NORMAL if not toggle else wx.ITEM_CHECK
             tool = self.InsertTool(idx, -1, name, bmp, wx.NullBitmap, kind,
                                    description or "")
@@ -1363,17 +1425,7 @@ class ToolbarWx(ToolContainerBase, wx.ToolBar):
             control.Bind(wx.EVT_LEFT_DOWN, handler)
 
         self._toolitems.setdefault(name, [])
-        group.insert(position, tool)
         self._toolitems[name].append((tool, handler))
-
-    def _add_to_group(self, group, name, position):
-        gr = self._groups.get(group, [])
-        if not gr:
-            sep = self.AddSeparator()
-            gr.append(sep)
-        before = gr[position]
-        self._groups[group] = gr
-        return before, gr
 
     def toggle_toolitem(self, name, toggled):
         if name not in self._toolitems:
@@ -1390,7 +1442,11 @@ class ToolbarWx(ToolContainerBase, wx.ToolBar):
             self.DeleteTool(tool.Id)
         del self._toolitems[name]
 
+    def set_message(self, s):
+        self._label_text.SetLabel(s)
 
+
+@cbook.deprecated("3.3")
 class StatusbarWx(StatusbarBase, wx.StatusBar):
     """For use with ToolManager."""
     def __init__(self, parent, *args, **kwargs):

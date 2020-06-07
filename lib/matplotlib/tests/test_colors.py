@@ -265,6 +265,84 @@ def test_BoundaryNorm():
     vals = np.ma.masked_invalid([np.Inf])
     assert np.all(bn(vals).mask)
 
+    # Incompatible extend and clip
+    with pytest.raises(ValueError, match="not compatible"):
+        mcolors.BoundaryNorm(np.arange(4), 5, extend='both', clip=True)
+
+    # Too small ncolors argument
+    with pytest.raises(ValueError, match="ncolors must equal or exceed"):
+        mcolors.BoundaryNorm(np.arange(4), 2)
+
+    with pytest.raises(ValueError, match="ncolors must equal or exceed"):
+        mcolors.BoundaryNorm(np.arange(4), 3, extend='min')
+
+    with pytest.raises(ValueError, match="ncolors must equal or exceed"):
+        mcolors.BoundaryNorm(np.arange(4), 4, extend='both')
+
+    # Testing extend keyword, with interpolation (large cmap)
+    bounds = [1, 2, 3]
+    cmap = cm.get_cmap('viridis')
+    mynorm = mcolors.BoundaryNorm(bounds, cmap.N, extend='both')
+    refnorm = mcolors.BoundaryNorm([0] + bounds + [4], cmap.N)
+    x = np.random.randn(100) * 10 + 2
+    ref = refnorm(x)
+    ref[ref == 0] = -1
+    ref[ref == cmap.N - 1] = cmap.N
+    assert_array_equal(mynorm(x), ref)
+
+    # Without interpolation
+    cmref = mcolors.ListedColormap(['blue', 'red'])
+    cmref.set_over('black')
+    cmref.set_under('white')
+    cmshould = mcolors.ListedColormap(['white', 'blue', 'red', 'black'])
+
+    refnorm = mcolors.BoundaryNorm(bounds, cmref.N)
+    mynorm = mcolors.BoundaryNorm(bounds, cmshould.N, extend='both')
+    assert mynorm.vmin == refnorm.vmin
+    assert mynorm.vmax == refnorm.vmax
+
+    assert mynorm(bounds[0] - 0.1) == -1  # under
+    assert mynorm(bounds[0] + 0.1) == 1   # first bin -> second color
+    assert mynorm(bounds[-1] - 0.1) == cmshould.N - 2  # next-to-last color
+    assert mynorm(bounds[-1] + 0.1) == cmshould.N  # over
+
+    x = [-1, 1.2, 2.3, 9.6]
+    assert_array_equal(cmshould(mynorm(x)), cmshould([0, 1, 2, 3]))
+    x = np.random.randn(100) * 10 + 2
+    assert_array_equal(cmshould(mynorm(x)), cmref(refnorm(x)))
+
+    # Just min
+    cmref = mcolors.ListedColormap(['blue', 'red'])
+    cmref.set_under('white')
+    cmshould = mcolors.ListedColormap(['white', 'blue', 'red'])
+
+    assert cmref.N == 2
+    assert cmshould.N == 3
+    refnorm = mcolors.BoundaryNorm(bounds, cmref.N)
+    mynorm = mcolors.BoundaryNorm(bounds, cmshould.N, extend='min')
+    assert mynorm.vmin == refnorm.vmin
+    assert mynorm.vmax == refnorm.vmax
+    x = [-1, 1.2, 2.3]
+    assert_array_equal(cmshould(mynorm(x)), cmshould([0, 1, 2]))
+    x = np.random.randn(100) * 10 + 2
+    assert_array_equal(cmshould(mynorm(x)), cmref(refnorm(x)))
+
+    # Just max
+    cmref = mcolors.ListedColormap(['blue', 'red'])
+    cmref.set_over('black')
+    cmshould = mcolors.ListedColormap(['blue', 'red', 'black'])
+
+    assert cmref.N == 2
+    assert cmshould.N == 3
+    refnorm = mcolors.BoundaryNorm(bounds, cmref.N)
+    mynorm = mcolors.BoundaryNorm(bounds, cmshould.N, extend='max')
+    assert mynorm.vmin == refnorm.vmin
+    assert mynorm.vmax == refnorm.vmax
+    x = [1.2, 2.3, 4]
+    assert_array_equal(cmshould(mynorm(x)), cmshould([0, 1, 2]))
+    x = np.random.randn(100) * 10 + 2
+    assert_array_equal(cmshould(mynorm(x)), cmref(refnorm(x)))
+
 
 @pytest.mark.parametrize("vmin,vmax", [[-1, 2], [3, 1]])
 def test_lognorm_invalid(vmin, vmax):
@@ -537,6 +615,35 @@ def test_cmap_and_norm_from_levels_and_colors():
     ax.tick_params(labelleft=False, labelbottom=False)
 
 
+@image_comparison(baseline_images=['boundarynorm_and_colorbar'],
+                  extensions=['png'])
+def test_boundarynorm_and_colorbarbase():
+
+    # Make a figure and axes with dimensions as desired.
+    fig = plt.figure()
+    ax1 = fig.add_axes([0.05, 0.80, 0.9, 0.15])
+    ax2 = fig.add_axes([0.05, 0.475, 0.9, 0.15])
+    ax3 = fig.add_axes([0.05, 0.15, 0.9, 0.15])
+
+    # Set the colormap and bounds
+    bounds = [-1, 2, 5, 7, 12, 15]
+    cmap = cm.get_cmap('viridis')
+
+    # Default behavior
+    norm = mcolors.BoundaryNorm(bounds, cmap.N)
+    cb1 = mcolorbar.ColorbarBase(ax1, cmap=cmap, norm=norm, extend='both',
+                                 orientation='horizontal')
+    # New behavior
+    norm = mcolors.BoundaryNorm(bounds, cmap.N, extend='both')
+    cb2 = mcolorbar.ColorbarBase(ax2, cmap=cmap, norm=norm,
+                                 orientation='horizontal')
+
+    # User can still force to any extend='' if really needed
+    norm = mcolors.BoundaryNorm(bounds, cmap.N, extend='both')
+    cb3 = mcolorbar.ColorbarBase(ax3, cmap=cmap, norm=norm,
+                                 extend='neither', orientation='horizontal')
+
+
 def test_cmap_and_norm_from_levels_and_colors2():
     levels = [-1, 2, 2.5, 3]
     colors = ['red', (0, 1, 0), 'blue', (0.5, 0.5, 0.5), (0.0, 0.0, 0.0, 1.0)]
@@ -617,14 +724,13 @@ def test_autoscale_masked():
 @image_comparison(['light_source_shading_topo.png'])
 def test_light_source_topo_surface():
     """Shades a DEM using different v.e.'s and blend modes."""
-    with cbook.get_sample_data('jacksboro_fault_dem.npz') as file, \
-         np.load(file) as dem:
-        elev = dem['elevation']
-        dx, dy = dem['dx'], dem['dy']
-        # Get the true cellsize in meters for accurate vertical exaggeration
-        # Convert from decimal degrees to meters
-        dx = 111320.0 * dx * np.cos(dem['ymin'])
-        dy = 111320.0 * dy
+    dem = cbook.get_sample_data('jacksboro_fault_dem.npz', np_load=True)
+    elev = dem['elevation']
+    dx, dy = dem['dx'], dem['dy']
+    # Get the true cellsize in meters for accurate vertical exaggeration
+    # Convert from decimal degrees to meters
+    dx = 111320.0 * dx * np.cos(dem['ymin'])
+    dy = 111320.0 * dy
 
     ls = mcolors.LightSource(315, 45)
     cmap = cm.gist_earth
@@ -690,6 +796,19 @@ def test_light_source_shading_default():
          ]).T
 
     assert_array_almost_equal(rgb, expect, decimal=2)
+
+
+def test_light_source_shading_empty_mask():
+    y, x = np.mgrid[-1.2:1.2:8j, -1.2:1.2:8j]
+    z0 = 10 * np.cos(x**2 + y**2)
+    z1 = np.ma.array(z0)
+
+    cmap = plt.cm.copper
+    ls = mcolors.LightSource(315, 45)
+    rgb0 = ls.shade(z0, cmap)
+    rgb1 = ls.shade(z1, cmap)
+
+    assert_array_almost_equal(rgb0, rgb1)
 
 
 # Numpy 1.9.1 fixed a bug in masked arrays which resulted in

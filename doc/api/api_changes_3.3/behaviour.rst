@@ -181,8 +181,8 @@ explicitly pass a "%1.2f" as the *valfmt* parameter to `.Slider`.
 
 Add *normalize*  keyword argument to ``Axes.pie``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-``pie()`` used to draw a partial pie if the sum of the values was < 1. This behavior 
-is deprecated and will change to always normalizing the values to a full pie by default. 
+``pie()`` used to draw a partial pie if the sum of the values was < 1. This behavior
+is deprecated and will change to always normalizing the values to a full pie by default.
 If you want to draw a partial pie, please pass ``normalize=False`` explicitly.
 
 ``table.CustomCell`` is now an alias for `.table.Cell`
@@ -291,5 +291,24 @@ larger GUIs, where Matplotlib may control the toolbar but not the status bar.
 :rc:`text.hinting` now supports the values "default", "no_autohint",
 "force_autohint", and "no_hinting", which directly map to the FreeType flags
 FT_LOAD_DEFAULT, etc.  The old synonyms (respectively "either", "native",
-"auto", and "none") are still supported.  To get normalized values, use
-`.backend_agg.get_hinting_flag`, which returns integer flag values.
+"auto", and "none") are still supported, but their use is discouraged.  To get
+normalized values, use `.backend_agg.get_hinting_flag`, which returns integer
+flag values.
+
+`.cbook.get_sample_data` auto-loads numpy arrays
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When `.cbook.get_sample_data` is used to load a npy or npz file and the
+keyword-only parameter ``np_load`` is True, the file is automatically loaded
+using `numpy.load`.  ``np_load`` defaults to False for backwards compatibility,
+but will become True in a later release.
+
+``get_text_width_height_descent`` now checks ``ismath`` rather than :rc:`text.usetex`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+... to determine whether a string should be passed to the usetex machinery or
+not.  This allows single strings to be marked as not-usetex even when the
+rcParam is True.
+
+`.Axes.vlines`, `.Axes.hlines`, `.pyplot.vlines` and `.pyplot.hlines` *colors* parameter default change
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The *colors* parameter will now default to :rc:`lines.color`, while previously it defaulted to 'k'.

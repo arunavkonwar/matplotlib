@@ -414,13 +414,10 @@ class FigureManagerTk(FigureManagerBase):
         self.toolbar = self._get_toolbar()
         self.canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
-        self.statusbar = None
-
         if self.toolmanager:
             backend_tools.add_tools_to_manager(self.toolmanager)
             if self.toolbar:
                 backend_tools.add_tools_to_container(self.toolbar)
-                self.statusbar = StatusbarTk(self.window, self.toolmanager)
 
         self._shown = False
 
@@ -434,6 +431,17 @@ class FigureManagerTk(FigureManagerBase):
         return toolbar
 
     def resize(self, width, height):
+        max_size = 1_400_000  # the measured max on xorg 1.20.8 was 1_409_023
+
+        if (width > max_size or height > max_size) and sys.platform == 'linux':
+            raise ValueError(
+                'You have requested to resize the '
+                f'Tk window to ({width}, {height}), one of which '
+                f'is bigger than {max_size}.  At larger sizes xorg will '
+                'either exit with an error on newer versions (~1.20) or '
+                'cause corruption on older version (~1.19).  We '
+                'do not expect a window over a million pixel wide or tall '
+                'to be intended behavior.')
         self.canvas._tkcanvas.configure(width=width, height=height)
 
     def show(self):
@@ -541,8 +549,12 @@ class NavigationToolbar2Tk(NavigationToolbar2, tk.Frame):
 
     def set_cursor(self, cursor):
         window = self.canvas.get_tk_widget().master
-        window.configure(cursor=cursord[cursor])
-        window.update_idletasks()
+        try:
+            window.configure(cursor=cursord[cursor])
+        except tkinter.TclError:
+            pass
+        else:
+            window.update_idletasks()
 
     def _Button(self, text, image_file, toggle, command):
         image = (tk.PhotoImage(master=self, file=image_file)
@@ -714,6 +726,9 @@ class ToolbarTk(ToolContainerBase, tk.Frame):
         tk.Frame.__init__(self, master=window,
                           width=int(width), height=int(height),
                           borderwidth=2)
+        self._message = tk.StringVar(master=self)
+        self._message_label = tk.Label(master=self, textvariable=self._message)
+        self._message_label.pack(side=tk.RIGHT)
         self._toolitems = {}
         self.pack(side=tk.TOP, fill=tk.X)
         self._groups = {}
@@ -758,7 +773,11 @@ class ToolbarTk(ToolContainerBase, tk.Frame):
             toolitem.pack_forget()
         del self._toolitems[name]
 
+    def set_message(self, s):
+        self._message.set(s)
 
+
+@cbook.deprecated("3.3")
 class StatusbarTk(StatusbarBase, tk.Frame):
     def __init__(self, window, *args, **kwargs):
         StatusbarBase.__init__(self, *args, **kwargs)
